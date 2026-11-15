@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateModuleSemester } from "@/app/admin/actions";
+import { activeProvider, providerLabel } from "@/lib/ai/extract";
 import { requireAdmin } from "@/lib/auth";
 import { SEMESTERS, semesterLabel } from "@/lib/semesters";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -32,7 +33,8 @@ export default async function AdminModulePage({ params }: { params: Promise<{ id
   if (docsError) throw new Error(docsError.message);
   if (jobsError) throw new Error(jobsError.message);
 
-  const aiEnabled = Boolean(process.env.ANTHROPIC_API_KEY);
+  const provider = activeProvider();
+  const aiEnabled = provider !== null;
   const documents = (docs ?? []) as DocumentRow[];
   const titles = new Map(documents.map((d) => [d.id, d.title]));
   const jobRows = ((jobs ?? []) as ImportJob[]).map((j) => ({
@@ -80,7 +82,7 @@ export default async function AdminModulePage({ params }: { params: Promise<{ id
 
       {!aiEnabled && (
         <p className="card p-4 text-sm text-muted">
-          Import automatique par l&apos;IA désactivé : ajoutez <code>ANTHROPIC_API_KEY</code> dans <code>.env.local</code>{" "}
+          Import automatique par l&apos;IA désactivé : ajoutez <code>META_API_KEY</code> ou <code>ANTHROPIC_API_KEY</code> dans <code>.env.local</code>{" "}
           pour l&apos;activer. Vous pouvez déjà déposer les PDF ci-dessous pour les garder ici.
         </p>
       )}
@@ -88,6 +90,7 @@ export default async function AdminModulePage({ params }: { params: Promise<{ id
       {aiEnabled && (
       <section className="card space-y-3 p-5 text-sm">
         <h2 className="text-base font-semibold">Comment importer</h2>
+        {provider && <p className="text-xs text-muted">IA utilisée : {providerLabel(provider)}</p>}
         <ol className="list-decimal space-y-1 pl-5 text-muted">
           <li>
             Déposez d&apos;abord les <strong>cours</strong> du professeur : l&apos;IA s&apos;en sert pour corriger.

@@ -1,10 +1,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { extractQuestions, uploadPdfToAnthropic, type ExtractedQuestion, type SourceDoc } from "@/lib/ai/extract";
+import {
+  activeProvider,
+  extractQuestions,
+  pagesPerPart,
+  uploadPdf,
+  type AiProvider,
+  type ExtractedQuestion,
+  type SourceDoc,
+  type SourcePart,
+} from "@/lib/ai/extract";
+import { splitRanges } from "@/lib/ai/schema";
 import { countPages, extractPages, planChunks } from "@/lib/pdf";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { DocumentRow, ImportJob, Module } from "@/lib/types";
 
 // Claude reads up to 600 PDF pages per request; keep room for the exam extract and answer key.
+// Meta is held to the same limit until its multi-PDF behaviour is measured.
 const MAX_LESSON_PAGES = 550;
 // Longer than the step route's maxDuration (300 s), so a lease only expires once its request is dead.
 const LEASE_MS = 6 * 60 * 1000;
@@ -15,23 +26,39 @@ export async function downloadDocument(db: SupabaseClient, doc: DocumentRow): Pr
   return new Uint8Array(await data.arrayBuffer());
 }
 
-/** Uploads lesson and answer-key PDFs to the Anthropic Files API once, so every chunk can reference them by id. */
-async function ensureAnthropicFiles(db: SupabaseClient, moduleId: string): Promise<void> {
+/** Parts of `doc` already uploaded to `provider`, or null. Falls back to the pre-0006 `anthropic_file_id` column. */
+export function storedParts(doc: DocumentRow, provider: AiProvider): SourcePart[] | null {
+  const parts = doc.ai_files?.[provider];
+  if (parts && parts.length > 0) return parts;
+  if (provider === "claude" && doc.anthropic_file_id) {
+    return [{ fileId: doc.anthropic_file_id, firstPage: 1, lastPage: doc.page_count ?? 1 }];
+  }
+  return null;
+}
+
+/** Uploads lesson and answer-key PDFs to the provider once, so every chunk can reference them by id. */
+async function ensureProviderFiles(db: SupabaseClient, moduleId: string, provider: AiProvider): Promise<void> {
   const { data: docs, error } = await db
     .from("documents")
     .select("*")
     .eq("module_id", moduleId)
-    .in("kind", ["cours", "corrige"])
-    .is("anthropic_file_id", null);
+    .in("kind", ["cours", "corrige"]);
   if (error) throw new Error(error.message);
 
   for (const doc of (docs ?? []) as DocumentRow[]) {
+    if (storedParts(doc, provider)) continue;
     const bytes = await downloadDocument(db, doc);
     const pageCount = await countPages(bytes);
-    const fileId = await uploadPdfToAnthropic(bytes, `${doc.title}.pdf`);
+    const ranges = splitRanges(pageCount, pagesPerPart(provider));
+    const parts: SourcePart[] = [];
+    for (const range of ranges) {
+      const partBytes = ranges.length === 1 ? bytes : await extractPages(bytes, range.firstPage, range.lastPage);
+      const suffix = ranges.length === 1 ? "" : ` (p${range.firstPage}-${range.lastPage})`;
+      parts.push({ ...range, fileId: await uploadPdf(provider, partBytes, `${doc.title}${suffix}.pdf`) });
+    }
     const { error: updateError } = await db
       .from("documents")
-      .update({ anthropic_file_id: fileId, page_count: pageCount })
+      .update({ ai_files: { ...(doc.ai_files ?? {}), [provider]: parts }, page_count: pageCount })
       .eq("id", doc.id);
     if (updateError) throw new Error(updateError.message);
   }
@@ -45,7 +72,7 @@ export interface ModuleSources {
 }
 
 /** Lessons in a stable order (so the prompt cache hits) and the answer keys matching the exam's year/session. */
-export async function loadSources(db: SupabaseClient, exam: DocumentRow): Promise<ModuleSources> {
+export async function loadSources(db: SupabaseClient, exam: DocumentRow, provider: AiProvider): Promise<ModuleSources> {
   const [{ data: module, error: moduleError }, { data: docs, error: docsError }] = await Promise.all([
     db.from("modules").select("*").eq("id", exam.module_id).single(),
     db
@@ -60,16 +87,16 @@ export async function loadSources(db: SupabaseClient, exam: DocumentRow): Promis
   if (docsError) throw new Error(docsError.message);
 
   const all = (docs ?? []) as DocumentRow[];
-  const lessonDocs = all.filter((d) => d.kind === "cours" && d.anthropic_file_id);
+  const lessonDocs = all.filter((d) => d.kind === "cours" && storedParts(d, provider));
   const corrigeDocs = all.filter(
     (d) =>
       d.kind === "corrige" &&
-      d.anthropic_file_id &&
+      storedParts(d, provider) &&
       exam.exam_year !== null &&
       d.exam_year === exam.exam_year &&
       (d.exam_session === null || exam.exam_session === null || d.exam_session === exam.exam_session),
   );
-  const toSource = (d: DocumentRow): SourceDoc => ({ fileId: d.anthropic_file_id!, title: d.title });
+  const toSource = (d: DocumentRow): SourceDoc => ({ title: d.title, parts: storedParts(d, provider)! });
   return {
     module: module as Module,
     lessonDocs,
@@ -78,7 +105,7 @@ export async function loadSources(db: SupabaseClient, exam: DocumentRow): Promis
   };
 }
 
-/** Maps Claude's output to question + choice rows. Ids are generated here so both tables can be bulk-inserted. */
+/** Maps the model's output to question + choice rows. Ids are generated here so both tables can be bulk-inserted. */
 export function toRows(
   extracted: ExtractedQuestion,
   ctx: { exam: DocumentRow; lessonDocs: DocumentRow[]; jobId: string | null; questionId?: string },
@@ -143,9 +170,12 @@ export async function runImportStep(jobId: string): Promise<ImportJob> {
   const exam = examData as DocumentRow;
 
   try {
+    const provider = activeProvider();
+    if (!provider) throw new Error("AI import is disabled: set META_API_KEY or ANTHROPIC_API_KEY.");
+
     if (job.status === "pending") {
-      await ensureAnthropicFiles(db, exam.module_id);
-      const { lessonDocs } = await loadSources(db, exam);
+      await ensureProviderFiles(db, exam.module_id, provider);
+      const { lessonDocs } = await loadSources(db, exam, provider);
       const lessonPages = lessonDocs.reduce((sum, d) => sum + (d.page_count ?? 0), 0);
       if (lessonPages > MAX_LESSON_PAGES) {
         throw new Error(
@@ -185,7 +215,9 @@ export async function runImportStep(jobId: string): Promise<ImportJob> {
     if (claimError) throw new Error(claimError.message);
     if (!claimed || claimed.length === 0) return job;
 
-    const sources = await loadSources(db, exam);
+    // The provider can change between steps (env update + redeploy): upload anything missing for the current one.
+    await ensureProviderFiles(db, exam.module_id, provider);
+    const sources = await loadSources(db, exam, provider);
     const examBytes = await downloadDocument(db, exam);
     const chunkPdf = await extractPages(examBytes, chunk.contextStart, chunk.end);
     const extracted = await extractQuestions({

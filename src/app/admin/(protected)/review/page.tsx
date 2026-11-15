@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { activeProvider } from "@/lib/ai/extract";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { DocumentRow, Module, QuestionWithChoices } from "@/lib/types";
@@ -113,7 +114,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Searc
                 key={q.updated_at}
                 question={q}
                 pdfUrl={q.exam_document_id ? pdfUrls[q.exam_document_id] : undefined}
-                aiEnabled={Boolean(process.env.ANTHROPIC_API_KEY)}
+                aiEnabled={activeProvider() !== null}
               />
             </li>
           ))}

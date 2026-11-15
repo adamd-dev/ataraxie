@@ -25,7 +25,10 @@ export interface DocumentRow {
   title: string;
   storage_path: string;
   page_count: number | null;
+  /** Legacy Claude file id (before migration 0006). */
   anthropic_file_id: string | null;
+  /** Files uploaded to each AI provider; long lessons are stored as page-range parts. */
+  ai_files?: Partial<Record<"claude" | "meta", { fileId: string; firstPage: number; lastPage: number }[]>> | null;
   exam_year: number | null;
   exam_session: string | null;
   created_at: string;
