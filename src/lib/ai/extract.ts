@@ -1,6 +1,6 @@
 import * as claude from "./claude";
 import * as meta from "./meta";
-import type { ExtractInput, ExtractedQuestion, RegenerateInput } from "./schema";
+import type { ExtractInput, ExtractedQuestion, LessonSelectInput, RegenerateInput } from "./schema";
 
 export type { ExtractedQuestion, SourceDoc, SourcePart } from "./schema";
 
@@ -40,4 +40,14 @@ export function extractQuestions(input: ExtractInput): Promise<ExtractedQuestion
 
 export function regenerateQuestion(input: RegenerateInput): Promise<ExtractedQuestion> {
   return provider() === "meta" ? meta.regenerateQuestion(input) : claude.regenerateQuestion(input);
+}
+
+/**
+ * Most lesson pages sent with one extract. Meta counts each PDF page as text plus an image (~2.3k tokens),
+ * so 250 pages stay well under its 1M-token window; Claude reads at most 600 PDF pages per request.
+ */
+export const lessonPageBudget = (p: AiProvider) => (p === "meta" ? 250 : 500);
+
+export function selectLessons(input: LessonSelectInput): Promise<number[]> {
+  return provider() === "meta" ? meta.selectLessons(input) : claude.selectLessons(input);
 }

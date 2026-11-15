@@ -1,5 +1,8 @@
 import { z } from "zod";
 import {
+  LessonChoice,
+  selectInstruction,
+  type LessonSelectInput,
   ExtractionResult,
   SingleQuestionResult,
   SYSTEM,
@@ -90,7 +93,7 @@ function contextParts(lessons: SourceDoc[], corriges: SourceDoc[]): ContentPart[
       parts.push({ type: "input_text", text: partTitle(prefix, doc, i) });
       parts.push({ type: "input_file", file_id: p.fileId });
     });
-  lessons.forEach((doc, n) => add(`Cours #${n}`, doc));
+  lessons.forEach((doc) => add(`Cours #${doc.index}`, doc));
   corriges.forEach((doc) => add("Corrigé", doc));
   return parts;
 }
@@ -213,4 +216,16 @@ export async function regenerateQuestion(input: RegenerateInput): Promise<Extrac
   );
   const q = result.question;
   return { ...q, exam_page: input.firstPage + q.extract_page - 1 };
+}
+
+/** Picks the lessons relevant to an exam extract from their titles (cheap: the lessons themselves are not sent). */
+export async function selectLessons(input: LessonSelectInput): Promise<number[]> {
+  const result = await respond(
+    LessonChoice,
+    "lesson_choice",
+    [...examParts(input.pagesPdf, input.examTitle), { type: "input_text", text: selectInstruction(input) }],
+    4000,
+    `ataraxie:select:${input.moduleName}`.slice(0, 200),
+  );
+  return result.lessons;
 }
