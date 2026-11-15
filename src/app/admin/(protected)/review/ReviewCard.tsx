@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { saveQuestion, setQuestionStatus } from "@/app/admin/actions";
+import { LessonPageToggle } from "@/components/LessonPageToggle";
 import type { Confidence, QuestionStatus, QuestionWithChoices } from "@/lib/types";
 
 const confidenceStyles: Record<Confidence, string> = {
@@ -192,6 +193,10 @@ export function ReviewCard({
           <input className="input" placeholder="Titre du cours" value={lessonTitle} onChange={(e) => setLessonTitle(e.target.value)} />
           <input className="input" placeholder="Page" inputMode="numeric" value={lessonPage} onChange={(e) => setLessonPage(e.target.value)} />
         </div>
+        {question.lesson_document_id && /^\d+$/.test(lessonPage) && Number(lessonPage) > 0 && (
+          // Admin preview: follows the page typed above, so a wrong reference can be fixed before publishing.
+          <LessonPageToggle key={lessonPage} questionId={question.id} excerpt={excerpt || null} page={Number(lessonPage)} />
+        )}
       </div>
 
       <label className="flex items-start gap-2 text-sm">

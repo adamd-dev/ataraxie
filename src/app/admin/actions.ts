@@ -2,6 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
+import { lessonPageCacheFolder } from "@/lib/lesson-page";
 import { parseSemester } from "@/lib/semesters";
 import { slugify } from "@/lib/slug";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -89,6 +90,10 @@ export async function deleteDocument(documentId: string): Promise<Result> {
   const { data: doc, error } = await db.from("documents").select("module_id, storage_path").eq("id", documentId).single();
   if (error || !doc) return { error: error?.message ?? "Document not found" };
   await db.storage.from("documents").remove([doc.storage_path]);
+  // Single pages cached for students (lessons only; the folder is empty for other kinds).
+  const folder = lessonPageCacheFolder(documentId);
+  const { data: cached } = await db.storage.from("documents").list(folder, { limit: 1000 });
+  if (cached?.length) await db.storage.from("documents").remove(cached.map((f) => `${folder}/${f.name}`));
   // Questions keep their content; their exam/lesson links are set to null by the foreign keys.
   const { error: deleteError } = await db.from("documents").delete().eq("id", documentId);
   if (deleteError) return { error: deleteError.message };

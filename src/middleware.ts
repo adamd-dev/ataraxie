@@ -34,6 +34,7 @@ export const config = {
     "/compte/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
+    "/api/lesson-page/:path*",
     "/connexion",
     "/inscription",
     "/auth/:path*",
