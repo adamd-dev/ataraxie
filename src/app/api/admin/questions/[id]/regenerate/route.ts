@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { regenerateQuestion } from "@/lib/ai/extract";
+import { activeProvider, regenerateQuestion } from "@/lib/ai/extract";
 import { getAdminUser } from "@/lib/auth";
 import { downloadDocument, loadSources, toRows } from "@/lib/import/run-step";
 import { countPages, extractPages } from "@/lib/pdf";
@@ -29,7 +29,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (examError || !examData) throw new Error(examError?.message ?? "Exam document not found");
     const exam = examData as DocumentRow;
 
-    const sources = await loadSources(db, exam);
+    const provider = activeProvider();
+    if (!provider) throw new Error("AI import is disabled: set META_API_KEY or ANTHROPIC_API_KEY.");
+    const sources = await loadSources(db, exam, provider);
     const examBytes = await downloadDocument(db, exam);
     const pageCount = exam.page_count ?? (await countPages(examBytes));
     const page = question.source_page ?? 1;
@@ -65,7 +67,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       jobId: null,
       questionId: question.id,
     });
-    // Keep the question's id and original import job; replace everything Claude produced.
+    // Keep the question's id and original import job; replace everything the model produced.
     const fields: Partial<typeof row> = { ...row };
     delete fields.id;
     delete fields.import_job_id;
