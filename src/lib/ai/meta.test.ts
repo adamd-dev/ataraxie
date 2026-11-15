@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { metaModel, outputText, toMetaSchema } from "./meta";
-import { ExtractionResult, SingleQuestionResult } from "./schema";
+import { ExtractionResult, LessonChoice, SingleQuestionResult } from "./schema";
 
 /** Meta strict mode: no allOf/oneOf, every object closed and with all properties required. */
 function assertStrictCompatible(node: unknown, path = "$"): void {
@@ -22,6 +22,7 @@ describe("toMetaSchema", () => {
   it.each([
     ["extraction", ExtractionResult],
     ["question", SingleQuestionResult],
+    ["lesson choice", LessonChoice],
   ])("produces a strict-compatible %s schema", (_, schema) => {
     const json = toMetaSchema(schema);
     expect(json.$schema).toBeUndefined();

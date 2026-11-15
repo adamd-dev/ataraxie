@@ -35,6 +35,8 @@ export type ExtractedQuestion = RawExtractedQuestion & { exam_page: number };
 
 /** A lesson or answer key already uploaded to the active provider. Large PDFs may be stored as several parts. */
 export interface SourceDoc {
+  /** Lessons: the N of "Cours #N", the lesson's position among ALL lessons of the module (stable when only some are sent). */
+  index: number;
   title: string;
   parts: SourcePart[];
 }
@@ -63,6 +65,49 @@ export interface RegenerateInput {
   firstPage: number;
   current: unknown;
   feedback: string;
+}
+
+/** Which lessons to send with an exam extract, when the module has too many to send them all. */
+export const LessonChoice = z.object({
+  lessons: z
+    .array(z.number().int())
+    .describe("Indices N of the Cours most likely to contain the answers, most relevant first; empty if the extract has no questions"),
+});
+
+export interface LessonSelectInput {
+  moduleName: string;
+  examTitle: string;
+  lessons: { index: number; title: string; pages: number }[];
+  pagesPdf: Uint8Array;
+}
+
+export function selectInstruction(input: Omit<LessonSelectInput, "pagesPdf">): string {
+  return [
+    `Module: ${input.moduleName}. Exam: ${input.examTitle}.`,
+    `The exam extract above contains some questions of the exam. The module's lessons are listed below; you cannot see them yet.`,
+    `Pick the lessons a student would need to answer the questions that appear in this extract, most relevant first.`,
+    `Include every lesson whose topic a question touches (a question can need several). Do not pick lessons for questions that are not in this extract.`,
+    `Lessons:`,
+    ...input.lessons.map((l) => `- Cours #${l.index}: ${l.title} (${l.pages} pages)`),
+  ].join("\n");
+}
+
+/**
+ * Keeps the chosen lessons (valid, unique, in the model's order) while their pages fit the budget.
+ * The first lesson is always kept, even alone over budget, so a question is never left without its lesson.
+ */
+export function budgetLessons(chosen: number[], lessons: { index: number; pages: number }[], budget: number): number[] {
+  const pagesOf = new Map(lessons.map((l) => [l.index, l.pages]));
+  const kept: number[] = [];
+  let used = 0;
+  for (const index of chosen) {
+    const pages = pagesOf.get(index);
+    if (pages === undefined || kept.includes(index)) continue;
+    if (kept.length > 0 && used + pages > budget) continue;
+    kept.push(index);
+    used += pages;
+  }
+  return kept;
 }
 
 export const SYSTEM = `You build revision material for medical students from their faculty's past exams (QCM / multiple-choice, often several correct answers per question).

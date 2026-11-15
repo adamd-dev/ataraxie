@@ -2,6 +2,9 @@ import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaContentBlockParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import {
+  LessonChoice,
+  selectInstruction,
+  type LessonSelectInput,
   ExtractionResult,
   SingleQuestionResult,
   SYSTEM,
@@ -34,7 +37,7 @@ function contextBlocks(lessons: SourceDoc[], corriges: SourceDoc[]): BetaContent
     source: { type: "file", file_id: doc.parts[i].fileId },
     title: partTitle(prefix, doc, i),
   });
-  const blocks: BetaContentBlockParam[] = lessons.flatMap((doc, n) => doc.parts.map((_, i) => docBlock(`Cours #${n}`, doc, i)));
+  const blocks: BetaContentBlockParam[] = lessons.flatMap((doc) => doc.parts.map((_, i) => docBlock(`Cours #${doc.index}`, doc, i)));
   // Lessons are identical for every chunk of every exam of a module: cache them.
   // The answer key differs per exam, so it goes after the breakpoint.
   const last = blocks.at(-1);
@@ -119,4 +122,24 @@ export async function regenerateQuestion(input: RegenerateInput): Promise<Extrac
   if (!response.parsed_output) throw new Error("Claude returned output that does not match the schema.");
   const q = response.parsed_output.question;
   return { ...q, exam_page: input.firstPage + q.extract_page - 1 };
+}
+
+/** Picks the lessons relevant to an exam extract from their titles (cheap: the lessons themselves are not sent). */
+export async function selectLessons(input: LessonSelectInput): Promise<number[]> {
+  const response = await anthropic().beta.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    betas: BETAS,
+    fallbacks: "default",
+    output_config: { effort: "low", format: betaZodOutputFormat(LessonChoice) },
+    messages: [
+      {
+        role: "user",
+        content: [pdfBlock(input.pagesPdf, `Exam extract: ${input.examTitle}`), { type: "text", text: selectInstruction(input) }],
+      },
+    ],
+  });
+  assertComplete(response);
+  if (!response.parsed_output) throw new Error("Claude returned output that does not match the schema.");
+  return response.parsed_output.lessons;
 }

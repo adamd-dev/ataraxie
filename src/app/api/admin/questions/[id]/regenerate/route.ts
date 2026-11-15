@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { activeProvider, regenerateQuestion } from "@/lib/ai/extract";
 import { getAdminUser } from "@/lib/auth";
-import { downloadDocument, loadSources, toRows } from "@/lib/import/run-step";
+import { downloadDocument, lessonsFor, loadSources, toRows } from "@/lib/import/run-step";
 import { countPages, extractPages } from "@/lib/pdf";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { DocumentRow, QuestionWithChoices } from "@/lib/types";
@@ -53,7 +53,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const regenerated = await regenerateQuestion({
       moduleName: sources.module.name,
       examTitle: exam.title,
-      lessons: sources.lessons,
+      lessons: await lessonsFor(provider, sources, exam.title, pagesPdf),
       corriges: sources.corriges,
       pagesPdf,
       firstPage,

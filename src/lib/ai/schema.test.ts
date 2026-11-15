@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { partTitle, placeInExam, splitRanges, type RawExtractedQuestion, type SourceDoc } from "./schema";
+import { budgetLessons, partTitle, placeInExam, selectInstruction, splitRanges, type RawExtractedQuestion, type SourceDoc } from "./schema";
 
 const q = (extract_page: number): RawExtractedQuestion => ({
   number: 1,
@@ -42,8 +42,9 @@ describe("placeInExam", () => {
 
 describe("partTitle", () => {
   it("gives the page offset only for multi-part documents", () => {
-    const one: SourceDoc = { title: "Cardio", parts: [{ fileId: "a", firstPage: 1, lastPage: 50 }] };
+    const one: SourceDoc = { index: 0, title: "Cardio", parts: [{ fileId: "a", firstPage: 1, lastPage: 50 }] };
     const two: SourceDoc = {
+      index: 0,
       title: "Cardio",
       parts: [
         { fileId: "a", firstPage: 1, lastPage: 100 },
@@ -52,5 +53,41 @@ describe("partTitle", () => {
     };
     expect(partTitle("Cours #0", one, 0)).toBe("Cours #0: Cardio");
     expect(partTitle("Cours #0", two, 1)).toContain("page 1 of this part is page 101");
+  });
+});
+
+describe("budgetLessons", () => {
+  const lessons = [
+    { index: 0, pages: 40 },
+    { index: 1, pages: 120 },
+    { index: 2, pages: 30 },
+    { index: 3, pages: 300 },
+  ];
+
+  it("keeps the model's order and drops lessons that do not fit", () => {
+    expect(budgetLessons([2, 1, 0], lessons, 160)).toEqual([2, 1]);
+  });
+
+  it("skips one oversized lesson but keeps later ones that fit", () => {
+    expect(budgetLessons([0, 3, 2], lessons, 100)).toEqual([0, 2]);
+  });
+
+  it("always keeps the first choice, even alone over budget", () => {
+    expect(budgetLessons([3], lessons, 250)).toEqual([3]);
+  });
+
+  it("ignores unknown and repeated indices", () => {
+    expect(budgetLessons([9, 0, 0, 2], lessons, 500)).toEqual([0, 2]);
+  });
+});
+
+describe("selectInstruction", () => {
+  it("lists lessons with their module-wide Cours number", () => {
+    const text = selectInstruction({
+      moduleName: "Dermatologie",
+      examTitle: "CPC 2026",
+      lessons: [{ index: 4, title: "05 Le Mélanome", pages: 32 }],
+    });
+    expect(text).toContain("- Cours #4: 05 Le Mélanome (32 pages)");
   });
 });

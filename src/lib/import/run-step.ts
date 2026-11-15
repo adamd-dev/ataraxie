@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   activeProvider,
   extractQuestions,
+  lessonPageBudget,
+  selectLessons,
   pagesPerPart,
   uploadPdf,
   type AiProvider,
@@ -9,14 +11,11 @@ import {
   type SourceDoc,
   type SourcePart,
 } from "@/lib/ai/extract";
-import { splitRanges } from "@/lib/ai/schema";
+import { budgetLessons, splitRanges } from "@/lib/ai/schema";
 import { countPages, extractPages, planChunks } from "@/lib/pdf";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { DocumentRow, ImportJob, Module } from "@/lib/types";
 
-// Claude reads up to 600 PDF pages per request; keep room for the exam extract and answer key.
-// Meta is held to the same limit until its multi-PDF behaviour is measured.
-const MAX_LESSON_PAGES = 550;
 // Longer than the step route's maxDuration (300 s), so a lease only expires once its request is dead.
 const LEASE_MS = 6 * 60 * 1000;
 
@@ -96,7 +95,7 @@ export async function loadSources(db: SupabaseClient, exam: DocumentRow, provide
       d.exam_year === exam.exam_year &&
       (d.exam_session === null || exam.exam_session === null || d.exam_session === exam.exam_session),
   );
-  const toSource = (d: DocumentRow): SourceDoc => ({ title: d.title, parts: storedParts(d, provider)! });
+  const toSource = (d: DocumentRow, index: number): SourceDoc => ({ index, title: d.title, parts: storedParts(d, provider)! });
   return {
     module: module as Module,
     lessonDocs,
@@ -142,6 +141,28 @@ export function toRows(
   return { question, choices };
 }
 
+const lessonPages = (doc: SourceDoc) => doc.parts.reduce((max, p) => Math.max(max, p.lastPage), 0);
+
+/**
+ * Lessons to send with one exam extract. When the module's lessons exceed the provider's page budget
+ * (e.g. 25 dermatology lessons ≈ 1M tokens for Meta), a cheap call picks the relevant ones from their titles.
+ * Name lesson PDFs by topic: the titles are all the picker sees.
+ */
+export async function lessonsFor(
+  provider: AiProvider,
+  sources: ModuleSources,
+  examTitle: string,
+  pagesPdf: Uint8Array,
+): Promise<SourceDoc[]> {
+  const budget = lessonPageBudget(provider);
+  const total = sources.lessons.reduce((sum, d) => sum + lessonPages(d), 0);
+  if (total <= budget) return sources.lessons;
+  const listed = sources.lessons.map((d) => ({ index: d.index, title: d.title, pages: lessonPages(d) }));
+  const chosen = await selectLessons({ moduleName: sources.module.name, examTitle, lessons: listed, pagesPdf });
+  const kept = new Set(budgetLessons(chosen, listed, budget));
+  return sources.lessons.filter((d) => kept.has(d.index));
+}
+
 async function failJob(db: SupabaseClient, jobId: string, message: string) {
   await db
     .from("import_jobs")
@@ -175,13 +196,6 @@ export async function runImportStep(jobId: string): Promise<ImportJob> {
 
     if (job.status === "pending") {
       await ensureProviderFiles(db, exam.module_id, provider);
-      const { lessonDocs } = await loadSources(db, exam, provider);
-      const lessonPages = lessonDocs.reduce((sum, d) => sum + (d.page_count ?? 0), 0);
-      if (lessonPages > MAX_LESSON_PAGES) {
-        throw new Error(
-          `The lessons of this module total ${lessonPages} pages; the limit is ${MAX_LESSON_PAGES}. Split the module or remove some lessons.`,
-        );
-      }
 
       const examBytes = await downloadDocument(db, exam);
       const pageCount = await countPages(examBytes);
@@ -223,7 +237,7 @@ export async function runImportStep(jobId: string): Promise<ImportJob> {
     const extracted = await extractQuestions({
       moduleName: sources.module.name,
       examTitle: exam.title,
-      lessons: sources.lessons,
+      lessons: await lessonsFor(provider, sources, exam.title, chunkPdf),
       corriges: sources.corriges,
       chunkPdf,
       chunk,
