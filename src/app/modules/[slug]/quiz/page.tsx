@@ -34,7 +34,7 @@ export default async function QuizPage({ params, searchParams }: { params: Promi
   const { data, error } = await db
     .from("questions")
     .select(
-      "id, module_id, exam_year, exam_session, number, statement, explanation, lesson_excerpt, lesson_title, lesson_page, choices(id, question_id, label, text, is_correct, position)",
+      "id, module_id, exam_year, exam_session, number, statement, explanation, lesson_excerpt, lesson_document_id, lesson_title, lesson_page, choices(id, question_id, label, text, is_correct, position)",
     )
     .eq("module_id", mod.id)
     .order("exam_year", { ascending: false, nullsFirst: false })

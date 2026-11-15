@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { recordAttempt, reportQuestion } from "@/app/actions";
 import { choiceState, isAnswerCorrect, scoreSummary, type ChoiceState } from "@/lib/scoring";
 import type { QuestionWithChoices } from "@/lib/types";
+import { LessonPageToggle } from "./LessonPageToggle";
 import { ProgressBar } from "./ProgressBar";
 
 type Mode = "practice" | "exam";
@@ -225,6 +226,9 @@ function Correction({
             </figcaption>
           )}
         </figure>
+      )}
+      {question.lesson_document_id && question.lesson_page && (
+        <LessonPageToggle questionId={question.id} excerpt={question.lesson_excerpt} page={question.lesson_page} />
       )}
       <ReportButton questionId={question.id} />
     </section>
